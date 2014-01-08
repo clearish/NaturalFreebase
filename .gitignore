@@ -1,0 +1,12 @@
+# Freebase API Key
+.freebase_api_key
+
+# Data, logs from Freebase downloads, etc.
+temp/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+
+# OS generated files
+.DS_Store

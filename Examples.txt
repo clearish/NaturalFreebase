@@ -1,0 +1,98 @@
+./findme novels about Canada by Canadian authors
+./findme novel about male politician by male author
+./findme novel about female child of male politician
+./findme author of novel about politician
+./findme novel about author of novel about love
+./findme books by politicians about politicians
+./findme cheeses from Spain
+./findme cheeses from countries in Asia
+./findme cheeses from anywhere in Italy
+./findme wines from Argentina
+./findme beers from Belgium
+./findme musicians from California
+./findme musicians from places in California
+./findme woman member of band from anywhere in Canada
+./findme -n10 woman member of band from anywhere in Canada
+./findme city in Canada
+./findme cheese with child # meaningful because of cheese person
+./findme cheese portrayed by animal # meaningless
+./findme mayor of Mexican restaurant
+./findme musician from city in Canada
+./findme animal portrayed by tv actor
+./findme politician from Canada with child
+./findme books by Canadian politicians
+./findme written work by Canadian woman
+./findme politician subject of written work
+./findme things about love by Canadian woman
+./findme -n 50 things from Chicago
+./findme things containing cities
+./findme musical album by band from Canada
+./findme -n 50 musical album by band from anywhere in Canada
+./findme film character portrayed by Canadian woman with child
+./findme cheese from locations led by people
+./findme cheese from things
+./findme things led by people
+./findme countries led by people
+./findme cheeses from countries containing a city with a female mayor
+./findme woman authors from countries in South America
+./findme film characters portrayed by Canadian musicians with film actor children
+./findme female author tv character portrayed by American musician
+./findme female tv character portrayed by male tv actor
+./findme books by American authors about politics
+./findme books about global warming
+./findme books about countries in South America
+./findme -z films about cities in America
+./findme -z film from Japan about dance
+./findme -z actors contributing to films by Japanese directors about dance
+./findme movies in Star Trek
+./findme movies in Harry Potter
+./findme -z female film character appearing in movie in Harry Potter
+./findme movies about buildings in New York
+./fineme female actors contributing to Sleepless In Seattle
+./findme athletes contributing to films by American women
+./findme sports teams serving places in California
+./findme cities in Florida served by sports teams
+./findme basketball team serving location in California with member Canadian person led by someone
+./findme people contributing to musical albums by the Beatles
+./findme people contributing to musical recordings on albums by the Beatles
+./findme paintings by Dutch artists at museums in Paris
+./findme paintings by Dutch artists at museums in cities in countries in Europe
+./findme museums in Paris owning paintings by American artists
+./findme museums owning painting by French artist owning painting by Dutch artist
+./findme -z work by Picasso
+./findme -z works by Cezanne at museums in Canada
+./findme works by Picasso owned by museums in places in Spain
+./findme university in California running basketball team
+./findme school in California HasSymbol animal
+./findme brands owned by companies from places in California
+./findme brands HasSymbol pink owned by companies from places in California
+./findme brands BroaderThan food owned by PepsiCo
+./findme restaurant in city in California PractitionerOf cuisine
+./findme children of Obama
+./findme work by Spanish artist about war owned by any museum
+./findme dead people with dead person kids
+./findme film by Japanese director HasGenre horror
+./findme films from Japan about sports
+./findme artwork about War by anyone
+./findme books about countries in Asia by politicians
+./findme artwork about a city owned by any museum
+./findme artwork about a city owned by a person
+./findme artworks about cities in America
+./findme book by male author about animal Symbolizes high school
+./findme vaccine by American person
+./findme comic strip character video game character
+./findme comic strip character portrayed by Bill Murray
+./findme comic book character portrayed by Anthony Hopkins
+./findme school in California HasSymbol blue
+./findme buildings by Spanish architects
+./findme -z -n10 ingredient Composes Cookies
+./findme food made of Caffeine
+./findme dish made of garlic
+./findme recipe made of egg
+./findme tea from place in India
+./findme -z live albums by Beyonce
+./findme -z video games about sports by Nintendo
+./findme person Created Garfield
+./findme -z characters appearing in Doonesbury
+./findme -z characters appearing in comic strips by Watterson
+./findme characters appearing in comic strips based on politicians

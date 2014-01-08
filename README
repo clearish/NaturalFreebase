@@ -1,0 +1,28 @@
+Find things on Freebase.
+
+For example:
+
+  > ./findme museums in Paris owning paintings by American artists
+
+  Carnavalet Museum
+     contained by: Paris
+     artwork: A Musical Party
+        artist: Mary Cassatt
+           country of nationality: United States of America
+  Musée National d'Art Moderne
+     contained by: Paris
+     artwork: Portrait de Raymond Radiguet
+        artist: Jacques Lipchitz
+           country of nationality: United States of America
+     artwork: The Big 5, The Black Figure 5
+        artist: Jasper Johns
+           country of nationality: United States of America
+  ...
+
+For help: ./findme -h
+
+--- Installation ---
+
+Get Python 2.7 with packages 'argparse', 'nltk' and 'inflect'.
+
+Put your Freebase API key in .freebase_api_key in the project root directory.

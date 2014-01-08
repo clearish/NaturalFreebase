@@ -1,0 +1,325 @@
+#!/usr/bin/python2.7
+
+"""
+findme [-h] [-v] [-z] [-n MIN] [-x MAX] [-s SHOW] query
+
+Usage:
+
+    findme cheeses from France
+
+(1) Parses query into tokens.  E.g. 'South America' and 'film actor' will count
+    as one token each.
+
+(2) Parses tokens into syntactic parse trees according to grammar rules in
+    grammar.py.  For example, 'people with kids from Canada' will have two
+    parses, roughly:
+
+        a. [ [ people with children ] from Canada ]
+        b. [ people with [ children from Canada ] ]
+
+(3) Finds (usually many) meanings for each syntactic parse, using functions
+    from interpret.py.  Each meaning comes with a "fit" value, which is a rough
+    estimate of how likely that meaning is.
+
+(4) Sorts all meanings from all parses by fit, and starts running the queries
+    with best fit on Freebase. 
+
+(5) Runs at least MIN queries on Freebase.  If no results have been found,
+    runs up to MAX queries.
+
+(6) Prints results.
+
+"""
+
+from __future__ import print_function
+from __future__ import division
+
+import sys
+import os
+import argparse
+import re
+import json
+import nltk
+import inflect
+
+from freebase_query import freebase_query
+import present_response
+import interpret
+from grammar import rules as grammar_rules
+from grammar_words import words as grammar_words
+from lexicon import lexicon
+from compatibility_matrix import compatibility
+
+# Change to directory of script, containing API key.
+os.chdir(sys.path[0])
+
+# Parse command line arguments.
+arg_parser = argparse.ArgumentParser(
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Find things on Freebase.",
+        epilog="Examples:\n"
+            + "  ./findme cheeses from France\n"
+            + "  ./findme -z children of Obama  # -z for fuzzy names\n"
+            + "  ./findme help school           # 'help' looks for types\n"
+            + "  ./findme actor rel movie       # 'rel' asks for relations\n")
+arg_parser.add_argument('-v', '--verbose', action="store_true",
+        help="print verbose output (parses, queries, etc.)")
+arg_parser.add_argument('-z', '--fuzzy', action="store_true",
+        help="fuzzy name matching")
+arg_parser.add_argument('-n', '--min',
+        help="minimum number of queries to run")
+arg_parser.add_argument('-x', '--max',
+        help="maximum number of queries to run")
+arg_parser.add_argument('-s', '--show', type=int, default=10,
+        help="number of queries to show (not necessarily run)")
+arg_parser.add_argument('words', metavar='word', nargs='+',
+        help="a string of English words, e.g. female musicians")
+args = arg_parser.parse_args()
+query_words = args.words
+DEFAULT_MIN = 3
+DEFAULT_MAX = 50
+if (not args.min and not args.max):
+    MIN_QUERIES = DEFAULT_MIN
+    MAX_QUERIES = DEFAULT_MAX
+elif (args.min and args.max):
+    MIN_QUERIES = int(args.min)
+    MAX_QUERIES = int(args.max)
+# Set max to default, but not less than min.
+elif (args.min and not args.max):
+    MIN_QUERIES = int(args.min)
+    MAX_QUERIES = max(DEFAULT_MAX, MIN_QUERIES)
+# Set min to default, but not more than max.
+elif (args.max and not args.min):
+    MAX_QUERIES = int(args.max)
+    MIN_QUERIES = min(DEFAULT_MIN, MAX_QUERIES)
+SHOW_QUERIES = max(args.show, MIN_QUERIES)
+VERBOSE = args.verbose or (MAX_QUERIES == 0)
+FUZZY_NAMES = args.fuzzy
+interpret.FUZZY_NAMES = FUZZY_NAMES
+
+query = ' '.join(query_words)
+tokens = query.split()
+
+# For a 'help word' query print known types that can be referred to by a name
+# containing that word.
+if 'help' in query.lower():
+    infl = inflect.engine()
+    name_matches = set()
+    comp_matches = set()
+    query = re.sub("help\s*", '', query)
+    try:
+        query_sing = infl.singular_noun(query)
+        if not query_sing: query_sing = query
+    except: query_sing = query
+    for name in lexicon.N_table:
+        if query_sing in name: name_matches |= {name} 
+    # For exact match, show highly compatible types as well.
+    if query_sing in lexicon.N_table:
+        for query_type in lexicon.N_table[query_sing]:
+            if query_type not in compatibility:
+                if VERBOSE:
+                    sys.stderr.write("Warning: '%s'" % query_type +
+                                     " not in compatibility matrix.\n")
+                continue
+            count = compatibility[query_type][query_type]
+            for comp_type in compatibility[query_type]:
+                if compatibility[query_type][comp_type] > count / 20:
+                    comp_matches |= {lexicon.type_table[comp_type]}
+        comp_matches -= name_matches
+        comp_matches -= {'topic'}
+
+    # First print matching names, then print compatible names.
+    first = 0
+    for matches in (name_matches, comp_matches):
+
+        # Find the shortest matching name that ends in the same word.
+        shortest_with_ending = {}
+        for name in matches:
+            words = name.split()
+            length = len(words)
+            last = words[-1]
+            if last not in shortest_with_ending:
+                shortest_with_ending[last] = length
+            else:
+                shortest_with_ending[last] = \
+                        min(shortest_with_ending[last], length)
+
+        # Sort by shortest with ending > last word > words count > alphabetical
+        for name in sorted(matches,
+                key = lambda x: (shortest_with_ending[x.split()[-1]],
+                                 x.split()[-1], len(x.split()), x)):
+            try:
+                singular = infl.singular_noun(name)
+                if singular and singular in matches:
+                    continue # Skip plurals whose singulars we've seen.
+            except: pass  # If infl.singular_noun breaks, count it as singular.
+            if first == 1: print('Similar: ', end='')
+            print(name)
+
+        first += 1
+
+    sys.exit()
+
+# Change recognized multiwords (e.g. musical recording) into single tokens.
+# This is greedy, so proceeds despite the fact that 'musical' is recognized.
+# Greediness also fails on things like 'musical recording artist'.  A smarter
+# algorithm would break truly ambiguous cases into multiple queries.
+first = 0
+while first < len(tokens):
+    for last in reversed(range(first+1, len(tokens)+1)):
+        multiword = ' '.join(tokens[first:last])
+        if multiword in grammar_words:
+            tokens[first:last] = [' '.join(tokens[first:last])]
+            break
+    first += 1
+
+# Add unrecognized (multi-)words to the grammar as DPs.  Changes longest
+# consecutive sequence of unrecognized words possible.  Print a warning for
+# lowercase names.
+index = 0
+lower_names = []
+while index < len(tokens):
+    if tokens[index] not in grammar_words:
+        name = tokens[index]
+        # Merge this and all immediately following unrecognized words.
+        # While reading a name, treat 'of' and 'the' as part of the name.
+        while index+1 < len(tokens) and \
+                tokens[index+1] not in grammar_words - {'of', 'the'}:
+            name += ' ' + tokens[index+1]
+            tokens.pop(index+1)
+        tokens[index] = name
+        # If any word in the name is lower case, add it to warning list.
+        # (Except for common lower case name components.)
+        for name_word in name.split():
+            if name_word.islower() and name_word not in {'of', 'the'}:
+                lower_names.append(name)
+                break
+        grammar_rules += "DP -> '%s'\n" % name
+    index += 1
+if lower_names:
+    name_str = 'names'
+    if len(lower_names) == 1: name_str = 'a name'
+    print("\nTreating %s as %s." %
+            (', '.join(["'%s'" % x for x in lower_names]), name_str))
+ 
+grammar = nltk.parse_cfg(grammar_rules)
+parser = nltk.ChartParser(grammar)
+trees = parser.nbest_parse(tokens)
+
+if not trees:
+    print("\nFailed to parse!\n")
+    sys.exit()
+
+if VERBOSE:
+    for tree in trees:
+        print('')
+        print(tree)
+
+seen_meanings = set()
+query_count = 0
+ran_count = 0
+found_results = 0
+separator = ''
+
+# Do successively deeper passes finding possible interpretations of the trees.
+# On each pass, query the new interpretations out to Freebase.  Stop when we
+# reach our goal, as specified by the min, max and show parameters.  The
+# 'accuracy' index is (roughly) how many meaning senses to entertain for a
+# given phrase unit.
+for accuracy in map(lambda x: 3*10**x, range(10)):
+
+    done = False
+    new_interps = []
+    interpret.ACCURACY = accuracy
+    interpret.MADE_ACCURACY_CUTS = False
+
+    if VERBOSE: print("\nSetting accuracy: %d\n" % accuracy)
+
+    # Get interpretations of trees at this level of accuracy.
+    # Find which of these are new interpretations.  Mark them as seen.
+    for tree in trees:
+        interps = interpret.DP(tree)
+        for interp in interps:
+            # Canonicalize meaning by removing numbers in ns123:type, etc.
+            meaning = re.sub('ns[0-9]*:', 'ns:', interp.sem)
+            if meaning not in seen_meanings:
+                seen_meanings |= {meaning}
+                new_interps.append(interp)
+
+    print_output = []
+    new_interps.sort(key=lambda x: x.fit, reverse=True)  # Sort by fit.
+    if new_interps:
+        for result in new_interps[:max(MAX_QUERIES, SHOW_QUERIES)]:
+            if VERBOSE:
+                print('======================================================')
+                print('Types: %s' % ', '.join(result.types))
+                print('Query: %s' % result.sem)
+                fit = result.fit
+                if fit > 0.0001: print('Fit: %.4f' % fit)
+                else: print('Fit: %.2E' % fit)
+
+            # Fetch first MIN_QUERIES always.  If still no hits, fetch more
+            # until first hit.  Give up at MAX_QUERIES.
+            if (query_count < MAX_QUERIES and found_results == 0) \
+                    or (query_count < MIN_QUERIES): 
+
+                # Run query on Freebase.
+
+                ran_count += 1
+                query_str = "[{" + result.sem + "}]"
+
+                # For some reason, json.loads requires double quotes??
+                # XXX: Note, this breaks on cases like "master's thesis"
+                query_str = re.sub("'", '"', query_str)
+
+                # Make two attempts at the Freebase query.  Usually a second
+                # fail indicates an impossible query.
+                for attempt in range(2):
+                    query = json.loads(query_str)
+                    response = freebase_query(query)
+                    if 'error' in response:
+                        print('Error: %s' % (response['error']['message']))
+                    else:
+                        if response: found_results += 1
+                        output = present_response.present_response(response,
+                                                                   query)
+                        if VERBOSE:
+                            print('--- Results ---\n' + output)
+                        elif output not in print_output:
+                            print_output.append(output)
+                            if output:
+                                print(separator)
+                                if not separator:
+                                    separator = '-' * 50
+                            print(output, end='')
+                        break
+
+            # If we're done running queries on Freebase and not interested in
+            # actually looking at the queries, then stop generating queries.
+            elif not VERBOSE:
+                done = True
+                break
+
+            query_count += 1
+            if found_results and query_count >= SHOW_QUERIES:
+                if VERBOSE:
+                    print("\nShowed %d queries and ran %d, out of which %d"
+                          % (SHOW_QUERIES, ran_count, found_results) +
+                          " got hits.\n")
+                done = True
+                break
+
+    if done: break
+
+    # If turning up accuracy won't help, don't.
+    if not interpret.MADE_ACCURACY_CUTS:
+        if VERBOSE: print("\nAccuracy %d covered all possible " % accuracy +
+                          "interpretations.\n")
+        break
+
+if not seen_meanings:
+    if 'rel' not in query.lower():
+        if VERBOSE: print('Meaningless!\n')
+        else: print('\nMeaningless!')
+
+if not VERBOSE: print('')

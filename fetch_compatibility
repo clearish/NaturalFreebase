@@ -1,0 +1,250 @@
+#!/usr/bin/python2.7
+
+"""Query Freebase for a list of all types, and then runs a threaded series of
+queries to fetch pairwise compatibility information for those types (or some
+subset thereof.
+
+Usage: fetch_compatibility [first [last]]
+
+Recommended usage to stay under quota (100k queries / day):
+
+  ./fetch_compatibility 0 2000  # Run at 10pm Pacific Time
+  ./fetch_compatibility 2000    # Run after midnight Pacific
+
+(The first batch is the easy types.  These will be fast, but will use up a lot
+of queries.  The second batch will also use a lot of queries, but much slower.)
+"""
+
+from __future__ import print_function
+
+import json
+import urllib
+import threading
+import codecs
+import locale
+import sys
+import time
+import datetime
+
+FIRST_TYPE = 0
+FETCH_TO_END = True
+if len(sys.argv) > 1:
+    FIRST_TYPE = int(sys.argv[1])    
+    if len(sys.argv) > 2:
+        FETCH_TO_END = False
+        LAST_TYPE = int(sys.argv[2])    
+
+# Wrap sys.stdout into a StreamWriter to allow writing unicode.
+sys.stdout = codecs.getwriter(locale.getpreferredencoding())(sys.stdout) 
+
+api_key = open(".freebase_api_key").read()
+service_url = 'https://www.googleapis.com/freebase/v1/mqlread'
+
+# Error thrown when Freebase fails.
+class FreebaseError(Exception): pass
+
+seen = {}
+
+# =============================================================================
+def freebase_query(query, print_intersects=False, intersects_type='',
+                   intersects_prefix=-1):
+    """Return all the results of running an MQL query.  If there are a lot of
+    results, fetches them all by calling the API multiple times using a cursor.
+
+    :param print_intersects: If set, print results after each cursor step.
+        (Otherwise, we'd have to keep all responses for one type in memory.)
+
+    :param intersects_type: The intersects type we're working on.
+    :param intersects_prefix: Thread ID to print before all output.
+    """
+# =============================================================================
+
+    if print_intersects:
+        # sys.stderr.write('[Prefix: %d Type: %s]'
+        #                  % (intersects_prefix, intersects_type))
+        seen[intersects_type] = {}
+    else: sys.stderr.write('.')
+
+    results = []
+    cursor = ''
+
+    while True:
+
+        params = {
+            'query': json.dumps(query),
+            'key': api_key,
+            'cursor': cursor
+        }
+        url = service_url + '?' + urllib.urlencode(params)
+
+        # ----- Starting Query -----
+        sys.stderr.write('(')
+
+        attempt = 0
+        max_attempt = 10
+        while True:
+            attempt += 1
+            if attempt > max_attempt: break
+            if attempt > 1:
+                sys.stderr.write('\nRetrying\n')
+                time.sleep(10);
+            # Aim for the threads to collectively respect the 10 query/s quota.
+            with freebase_query_sleep_lock: time.sleep(0.1)
+            try:
+                # Run Freebase query.
+                response = json.loads(urllib.urlopen(url).read())
+                if 'cursor' not in response:
+                    sys.stderr.write('\n%d Freebase Error\n'
+                                     % intersects_prefix)
+                    sys.stderr.write('Parameters: %s' % params)
+                    raise FreebaseError
+            except FreebaseError: continue
+            except IOError: continue
+            break
+        if attempt > max_attempt:
+            sys.stderr.write('\nGiving up after %d attempts\n' % max_attempt)
+            if 'error' in response:
+                if print_intersects:
+                    with print_type_intersect_lock:
+                        print('%d Error: %s' % (intersects_prefix,
+                                                response['error']['message']))
+                else: print('Error: %s' % (response['error']['message']))
+                sys.stdout.flush()
+            return
+
+        # ----- Finished Query -----
+        sys.stderr.write(')')
+
+        if not print_intersects: results += response['result']
+
+        # Print these results as type intersect output.
+        else:
+            result = response['result']
+            for topic in result:
+                for intersects in topic['a:type']:
+                    id = str(intersects['id'])
+                    if id not in seen[intersects_type]:
+                        seen[intersects_type][id] = 1
+                    else: seen[intersects_type][id] += 1
+
+        cursor = response['cursor']
+        if not cursor: break  # End of results, no more queries to do.
+
+        # For some reason, 'return':'count' queries have 'cursor':True
+        if cursor == True:
+            break  
+
+    if print_intersects:
+        with print_type_intersect_lock:
+            intersects = seen[intersects_type]
+            for id in sorted(intersects, key=intersects.get, reverse=True):
+                print('%d %s x %d' % (intersects_prefix, id, intersects[id]))
+        sys.stdout.flush()
+
+    return results
+
+# =============================================================================
+def print_type_intersects(types, prefix):
+    """Queries Freebase for info about which types are compatible with (i.e.
+    have at least one instance in common with) which other types.  Does so by
+    querying for every instance of the type, so gets very slow with big types.
+        :param types: types to be fetched
+        :param prefix: a prefix to print before all output, to identify threads
+    """
+# =============================================================================
+
+    for type in types:
+
+        with print_type_intersect_lock:
+            print('%d Type: %s' % (prefix, type))
+
+        query = [{
+            'type': type,
+            'a:type': [{ 'id': None,
+                'domain': {
+                    '/freebase/domain_profile/category': {
+                        'id|=': ['/category/commons', '/category/system']
+                     } } }],
+            'limit': 1000
+        }]
+
+        freebase_query(query, print_intersects=True, intersects_type=type,
+                       intersects_prefix=prefix)
+
+	sys.stderr.write("\nFinished type %s.\n" % type)
+
+# =============================================================================
+def print_all_type_intersects():
+    """Queries Freebase for all (important) types and calls
+    print_type_intersects() to print intersect info for each.  Note this will
+    take a long time.  ~2000 types, ~39,000,000 topics, 1000 results per query, 
+    each topic will show up in N queries, the number of types it instantiates
+    (~1-100).
+    """
+# =============================================================================
+
+    # Get all types in /commons and /system:
+    query = [{
+        'domain': { '/freebase/domain_profile/category': {
+            'id|=': [ '/category/commons', '/category/system' ] } },
+        'type': '/type/type',
+        'id': None,
+        'instance': { 'return': 'estimate-count' },
+        'sort': 'instance.estimate-count'
+    }]
+
+    response = freebase_query(query)
+
+    types_all = []
+    for type in response:
+        # Skip problematic types:
+        #     /type/text and /type/enumeration are fake types that break
+        #         Freebase when queried for.
+        #     /common/topic is just too big and we can fill in its intersect
+        #         values by symmetry (except for itself).
+        if str(type['id']) not in ('/type/text', '/type/enumeration',
+                                   '/common/topic'): 
+            types_all.append(str(type['id']))
+
+    global FIRST_TYPE, LAST_TYPE
+
+    # Select which types we'll actually query for compatibility info.
+    if FETCH_TO_END: LAST_TYPE = len(types_all)-1
+    types = types_all[FIRST_TYPE:LAST_TYPE+1]
+
+    print("# %s" % datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    sys.stderr.write("\n")
+
+    output = []
+
+    output.append("Found %d types total.\n" % len(types_all))
+    output.append("Fetching compatibility info for %d types (%d - %d):\n"
+            % (len(types), FIRST_TYPE, LAST_TYPE))
+    output.append("Types: %s\n" % types)
+    output.append("------------------------------------------------\n" % types)
+    for line in output:
+        sys.stderr.write(line)
+        print("# %s" % line, end='')
+
+    num_threads = 50
+    threads = []
+    for t in range(num_threads):
+        # Select equally spaced elements from types e.g. 57, 107, 157, 207, ...
+        which_types = [types[n] for n in range(t, len(types), num_threads)] 
+        threads.append(threading.Thread(target=print_type_intersects,
+                                        args = (which_types, t)))
+        threads[t].daemon = True
+        threads[t].start()
+
+    # Wait for threads to finish.
+    for t in threads: t.join()
+
+# =============================================================================
+
+# For staying under the freebase 10 queries/s quota.
+freebase_query_sleep_lock = threading.Lock()
+
+# For locking stdout, to avoid threads getting intertwined.
+print_type_intersect_lock = threading.Lock()
+
+print_all_type_intersects()

@@ -1,0 +1,21 @@
+#!/usr/bin/python2.7
+
+import sys
+
+from fetch_lexicon import *
+
+OUTPUT_PATH = 'lexicon/'
+
+file_to_function = {
+    'auto_rules_N.py': print_noun_table,
+    'auto_rules_type.py': print_type_table,
+    'auto_rules_property.py': print_property_table,
+    'auto_rules_predicate.py': print_metaschema_table,
+    'auto_rules_A_country.py': print_country_table
+}
+
+for filename in file_to_function:
+    sys.stderr.write('Writing ' + OUTPUT_PATH + filename + '\n')
+    sys.stdout = file(OUTPUT_PATH + filename, 'w')
+    file_to_function[filename]()  # Call appropriate function.
+    sys.stdout.close()

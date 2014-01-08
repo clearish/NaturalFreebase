@@ -1,0 +1,10 @@
+What would be wrong with using a truly compositional framework?
+Use general function application and predicate modification.
+
+book = Lx . book(x)
+author = Lx Ly . author-of(x)(y)
+by = Lx Ly . author-of(y)(x) & author(x) & book(y)
+by = Lx Ly . director-of(y)(x) & director(x) & movie(y) 
+Canadian = ...
+
+Kind of a pain to deal even with of-PPs on this framework.

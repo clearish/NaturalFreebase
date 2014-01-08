@@ -1,0 +1,110 @@
+#!/usr/bin/python2.7
+
+"""
+Take intertwined output of fetch_compatibility.py:
+
+    0 Type: /people/person
+    1 Type: /book/book
+    2 Type: /common/topic
+    0 /film/actor x 1000
+    1 /common/topic x 500
+    2 /government/politician x 2000
+    0 /book/author x 600
+    0 Type: /food/cheese
+    0 /food/ingredient x 100
+    2 /location/location x 5000
+
+... and turn it into this:
+
+    compatibility = {
+        '/book/book': { '/common/topic': 500 },
+        '/common/topic: { '/government/politician': 2000,
+                          '/location/location': 5000 }
+        '/food/cheese': { '/food/ingredient': 100 },
+        '/people/person': { '/film/actor': 1000, '/book/author': 600 },
+    }
+"""
+
+from __future__ import print_function
+import sys
+import re
+
+print('"""This is an auto-generated file with a table showing the pairwise\n'
+      'compatibility of the Freebase types.  Compatibility scores are the\n'
+      'number of objects in the intersection of the two types.  The table\n'
+      'should be symmetric, so [a][b] and [b][a] have the same value.\n'
+      '"""\n')
+
+prefix_to_type = {}
+intersects = {}
+for line in sys.stdin:
+    # Retain comments.
+    if re.match('\s*#', line):
+        print(line, end='')
+        continue
+    m = re.match('([0-9]*) (.*)$', line)
+    prefix = m.group(1)
+    rest = m.group(2)
+    m = re.match('Type: (.*)$', rest)
+    if m:
+        prefix_to_type[prefix] = m.group(1)
+        intersects[prefix_to_type[prefix]] = {}
+    else:
+        m = re.match('(.*) x ([0-9]*)$', rest)
+        intersect = m.group(1)
+        count = int(m.group(2))
+        intersects[prefix_to_type[prefix]][intersect] = count
+
+# Infer compatibility for missing symmetric cases.  Note, we need to copy the
+# keys to iterate over, since we'll be adding keys.
+for typ in intersects.keys():  # e.g. typ = '/food/cheese'
+    for intersect in intersects[typ]:  # e.g. intersect = '/common/topic'
+        if intersect not in intersects: intersects[intersect] = {}
+        if typ not in intersects[intersect]:
+            intersects[intersect][typ] = intersects[typ][intersect]
+            sys.stderr.write('Warning: Inferring %s -> %s based on symmetry\n'
+                             % (intersect, typ))
+        if intersects[intersect][typ] != intersects[typ][intersect]:
+            sys.stderr.write('Warning: %s x %s (%d) != %s x %s (%d)\n' %
+                    (intersect, typ, intersects[intersect][typ],
+                     typ, intersect, intersects[typ][intersect]))
+            # Use the smaller count in cases of disagreement.
+            smaller = min(intersects[intersect][typ],
+                          intersects[typ][intersect])
+            intersects[intersect][typ] = smaller
+            intersects[typ][intersect] = smaller
+
+# Put placeholders for compatibility of (bidirectionally) missing pairs.
+missing = []
+for type1 in intersects:
+    if type1 not in intersects[type1]:
+        missing.append(type1)
+for type1 in missing:
+    for type2 in missing:
+        sys.stderr.write('Warning: No info for %s x %s\n' % (type1, type2))
+        if type1 == type2 == '/common/topic':
+            NUM_TOPICS = 99999999  # More objects than there are in Freebase.
+            sys.stderr.write('Substituting %d\n' % NUM_TOPICS)
+            intersects[type1][type2] = NUM_TOPICS
+        else:
+            sys.stderr.write('Substituting 0\n')
+            intersects[type1][type2] = 0
+
+print('compatibility = {')
+for typ in intersects:
+    print("    '%s': {" % typ)
+    for intersect in sorted(intersects[typ], key=intersects[typ].get,
+                            reverse=True):
+        # ... final comma doesn't hurt
+        print("        '%s': %d," % (intersect, intersects[typ][intersect]))
+    # ... final comma doesn't hurt
+    print("    },")
+print('}')
+
+# Sanity check.  Print failures to sdterr.
+for type1 in intersects:
+    for type2 in intersects[type1]:
+        if intersects[type1][type2] > intersects[type1][type1]:
+            sys.stderr.write("Warning: %s x %s (%d) > %s (%d)\n"
+                    % (type1, type2, intersects[type1][type2],
+                       type1, intersects[type1][type1]))
